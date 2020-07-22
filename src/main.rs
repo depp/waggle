@@ -59,7 +59,6 @@ pub fn main() {
     }
 
     let app = Application::new();
-    let mut degree = 0.0;
     let mut x: i32 = 2200;
     let mut y: i32 = 512;
 
@@ -94,10 +93,8 @@ pub fn main() {
                 _ => (),
             },
             Event::RedrawRequested(_) => {
-                println!("el {:?}", event);
                 app.render(x, y);
                 raw_context.swap_buffers().unwrap();
-                degree += 1.0f32;
             }
             _ => (),
         }
@@ -175,11 +172,6 @@ extern "system" fn debug_callback(
         source, gltype, id, severity, message
     );
 }
-
-const TRI_VERTS: [GLfloat; 6] = [40.0f32, 16.0f32, 104.0f32, 16.0f32, 104.0f32, 80.0f32];
-const TRI_COLS: [GLfloat; 12] = [
-    0.0f32, 1.0f32, 0.0f32, 0.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32, 1.0f32, 0.0f32, 0.0f32,
-];
 
 unsafe fn compile_shader(stype: GLenum, source: &str) -> GLuint {
     let shader = gl::CreateShader(stype);
@@ -272,7 +264,7 @@ struct Application {
     program: GLuint,      // Program
     array: GLuint,        // Array
     block: GLuint,        // Buffer
-    dims: GLint,          // Uniform
+    scale: GLint,         // Uniform
     block_handle: GLuint, // UBO index
 }
 
@@ -280,35 +272,18 @@ impl Application {
     fn new() -> Self {
         unsafe {
             let program = create_program();
-            let pos_handle: GLuint =
-                gl::GetAttribLocation(program, CString::new("VertexPosition").unwrap().as_ptr())
-                    as GLuint;
             let mut array = 0;
-            let mut buffers = [0; 2];
+            let mut block = 0;
             gl::GenVertexArrays(1, &mut array);
-            gl::GenBuffers(2, buffers.as_mut_ptr());
-            let [verts, block] = buffers;
-            gl::BindVertexArray(array);
-            gl::BindBuffer(gl::ARRAY_BUFFER, verts);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                std::mem::size_of_val(&TRI_VERTS) as GLsizeiptr,
-                TRI_VERTS.as_ptr() as *const c_void,
-                gl::STATIC_DRAW,
-            );
-            gl::EnableVertexAttribArray(pos_handle);
-            gl::VertexAttribPointer(pos_handle, 2, gl::FLOAT, 0, 0, null());
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            gl::BindVertexArray(0);
-            let dims =
-                gl::GetUniformLocation(program, CString::new("Dimensions").unwrap().as_ptr());
+            gl::GenBuffers(1, &mut block);
+            let scale = gl::GetUniformLocation(program, CString::new("Scale").unwrap().as_ptr());
             let block_handle =
                 gl::GetUniformBlockIndex(program, CString::new("bitstring").unwrap().as_ptr());
             Application {
                 program,
                 array,
                 block,
-                dims,
+                scale,
                 block_handle,
             }
         }
@@ -321,7 +296,7 @@ impl Application {
 
             gl::UseProgram(self.program);
 
-            gl::Uniform2f(self.dims, x as f32, y as f32);
+            gl::Uniform2f(self.scale, 2.0 / x as f32, 2.0 / y as f32);
 
             gl::BindBuffer(gl::UNIFORM_BUFFER, self.block);
             gl::BufferData(
@@ -335,7 +310,7 @@ impl Application {
 
             gl::BindVertexArray(self.array);
 
-            gl::DrawArraysInstanced(gl::TRIANGLES, 0, 3, 4 * 32);
+            gl::DrawArraysInstanced(gl::TRIANGLE_STRIP, 0, 2 + 32 * 4, 4);
         }
     }
 }
