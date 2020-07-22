@@ -4,6 +4,7 @@ use glutin::event_loop::{ControlFlow, EventLoop};
 use glutin::window::WindowBuilder;
 use glutin::{ContextBuilder, GlProfile};
 use std::ffi::{c_void, CStr, CString};
+use std::fs;
 use std::os::raw::c_char;
 use std::ptr::null;
 use std::slice;
@@ -175,73 +176,88 @@ extern "system" fn debug_callback(
     );
 }
 
-const VERTEX_SRC: &str = include_str!("vertex_shader.glsl");
-const FRAGMENT_SRC: &str = include_str!("fragment_shader.glsl");
 const TRI_VERTS: [GLfloat; 6] = [40.0f32, 16.0f32, 104.0f32, 16.0f32, 104.0f32, 80.0f32];
 const TRI_COLS: [GLfloat; 12] = [
     0.0f32, 1.0f32, 0.0f32, 0.0f32, 0.0f32, 1.0f32, 0.0f32, 0.0f32, 1.0f32, 1.0f32, 0.0f32, 0.0f32,
 ];
 
-fn init_shaders() -> GLuint {
-    unsafe {
-        let vshader = gl::CreateShader(gl::VERTEX_SHADER);
-        let vsrc_ptr: &CStr = &CString::new(VERTEX_SRC).unwrap();
-        gl::ShaderSource(vshader, 1, &vsrc_ptr.as_ptr(), std::ptr::null());
-        gl::CompileShader(vshader);
-        let mut compiled = 0;
-        gl::GetShaderiv(vshader, gl::COMPILE_STATUS, &mut compiled);
-        println!("vshader compilation: {}", compiled);
-        if compiled == 0 {
-            let mut info_len = 0;
-            gl::GetShaderiv(vshader, gl::INFO_LOG_LENGTH, &mut info_len);
-            if info_len > 0 {
-                let mut buf: Vec<i8> = std::iter::repeat(0).take((info_len) as usize).collect();
-                gl::GetShaderInfoLog(vshader, info_len, std::ptr::null_mut(), buf.as_mut_ptr());
-                let ubuf: Vec<u8> = buf
-                    .iter()
-                    .map(|&x| x as u8)
-                    .take_while(|&x| x != 0)
-                    .collect();
-                println!(
-                    "Could not compile shader: {}",
-                    CString::new(ubuf).unwrap().to_str().unwrap()
-                );
-            }
-        }
-
-        let fshader = gl::CreateShader(gl::FRAGMENT_SHADER);
-        let fsrc_ptr: &CStr = &CString::new(FRAGMENT_SRC).unwrap();
-        gl::ShaderSource(fshader, 1, &fsrc_ptr.as_ptr(), std::ptr::null());
-        gl::CompileShader(fshader);
-        let mut compiled = 0;
-        gl::GetShaderiv(fshader, gl::COMPILE_STATUS, &mut compiled);
-        println!("fshader compilation: {}", compiled);
-        if compiled == 0 {
-            let mut info_len = 0;
-            gl::GetShaderiv(fshader, gl::INFO_LOG_LENGTH, &mut info_len);
-            if info_len > 0 {
-                let mut buf: Vec<i8> = std::iter::repeat(0).take((info_len) as usize).collect();
-                gl::GetShaderInfoLog(fshader, info_len, std::ptr::null_mut(), buf.as_mut_ptr());
-                let ubuf: Vec<u8> = buf
-                    .iter()
-                    .map(|&x| x as u8)
-                    .take_while(|&x| x != 0)
-                    .collect();
-                println!(
-                    "Could not compile shader: {}",
-                    CString::new(ubuf).unwrap().to_str().unwrap()
-                );
-            }
-        }
-        println!("shaders: {}, {}", vshader, fshader);
-        // currently assuming this compiles correctly
-
-        let program = gl::CreateProgram();
-        gl::AttachShader(program, vshader);
-        gl::AttachShader(program, fshader);
-        gl::LinkProgram(program);
-        return program;
+unsafe fn compile_shader(stype: GLenum, source: &str) -> GLuint {
+    let shader = gl::CreateShader(stype);
+    assert!(shader != 0);
+    let strings: [*const GLchar; 1] = [source.as_ptr() as *const GLchar];
+    let lengths: [GLint; 1] = [source.len() as GLint];
+    gl::ShaderSource(shader, 1, strings.as_ptr(), lengths.as_ptr());
+    gl::CompileShader(shader);
+    let mut status = 0;
+    gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut status);
+    let success = status != 0;
+    if !success {
+        eprintln!("Compilation failed.");
     }
+    let mut loglen = 0;
+    gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut loglen);
+    // Length includes nul terminator, which we don't care about.
+    if loglen > 1 {
+        let mut logtext = Vec::<u8>::with_capacity(loglen as usize);
+        logtext.resize_with(loglen as usize, Default::default);
+        let mut size = 0;
+        gl::GetShaderInfoLog(
+            shader,
+            loglen,
+            &mut size,
+            logtext.as_mut_ptr() as *mut GLchar,
+        );
+        if size > 0 {
+            logtext.truncate(size as usize);
+            let logstr = str::from_utf8(&logtext[..]).unwrap();
+            println!("Log: {}", logstr);
+        }
+    }
+    assert!(success);
+    shader
+}
+
+unsafe fn create_program() -> GLuint {
+    let program = gl::CreateProgram();
+    assert!(program != 0);
+    let vertex_src = fs::read("src/vertex_shader.glsl").unwrap();
+    let fragment_src = fs::read("src/fragment_shader.glsl").unwrap();
+    let shaders = [
+        compile_shader(gl::VERTEX_SHADER, str::from_utf8(&vertex_src).unwrap()),
+        compile_shader(gl::FRAGMENT_SHADER, str::from_utf8(&fragment_src).unwrap()),
+    ];
+    for &shader in shaders.iter() {
+        gl::AttachShader(program, shader);
+        gl::DeleteShader(shader);
+    }
+    gl::LinkProgram(program);
+    let mut status = 0;
+    gl::GetProgramiv(program, gl::LINK_STATUS, &mut status);
+    let success = status != 0;
+    if !success {
+        println!("Linking failed.");
+    }
+    let mut loglen = 0;
+    gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut loglen);
+    // Length includes nul terminator, which we don't care about.
+    if loglen > 1 {
+        let mut logtext = Vec::<u8>::with_capacity(loglen as usize);
+        logtext.resize(loglen as usize, 0);
+        let mut size = 0;
+        gl::GetProgramInfoLog(
+            program,
+            loglen,
+            &mut size,
+            logtext.as_mut_ptr() as *mut c_char,
+        );
+        if size > 0 {
+            logtext.truncate(size as usize);
+            let logstr = str::from_utf8(&logtext[..]).unwrap();
+            println!("Log: {}", logstr);
+        }
+    }
+    assert!(success);
+    program
 }
 
 // this is Some Shenanigans to deal with std140 layouts - next time use the shader_types crate
@@ -262,8 +278,8 @@ struct Application {
 
 impl Application {
     fn new() -> Self {
-        let program = init_shaders();
         unsafe {
+            let program = create_program();
             let pos_handle: GLuint =
                 gl::GetAttribLocation(program, CString::new("VertexPosition").unwrap().as_ptr())
                     as GLuint;
