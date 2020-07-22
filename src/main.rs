@@ -57,8 +57,7 @@ pub fn main() {
         unsafe { gl::DebugMessageCallbackKHR(Some(debug_callback), null()) };
     }
 
-    let program = init_shaders();
-    println!("program: {}", program);
+    let app = Application::new();
     let mut degree = 0.0;
     let mut x: i32 = 2200;
     let mut y: i32 = 512;
@@ -95,7 +94,7 @@ pub fn main() {
             },
             Event::RedrawRequested(_) => {
                 println!("el {:?}", event);
-                render(program, x, y);
+                app.render(x, y);
                 raw_context.swap_buffers().unwrap();
                 degree += 1.0f32;
             }
@@ -253,51 +252,74 @@ const BITSTRING: [[u32; 4]; 4] = [
     [0x1425e1fe; 4],
 ];
 
-fn render(program: GLuint, x: i32, y: i32) {
-    unsafe {
-        gl::ClearColor(0.2, 0.3, 0.3, 1.0);
-        gl::Clear(gl::COLOR_BUFFER_BIT);
-        gl::UseProgram(program);
-        // again, assuming this works
+struct Application {
+    program: GLuint,      // Program
+    array: GLuint,        // Array
+    block: GLuint,        // Buffer
+    dims: GLint,          // Uniform
+    block_handle: GLuint, // UBO index
+}
 
-        let pos_handle: GLuint =
-            gl::GetAttribLocation(program, CString::new("VertexPosition").unwrap().as_ptr())
-                as GLuint;
+impl Application {
+    fn new() -> Self {
+        let program = init_shaders();
+        unsafe {
+            let pos_handle: GLuint =
+                gl::GetAttribLocation(program, CString::new("VertexPosition").unwrap().as_ptr())
+                    as GLuint;
+            let mut array = 0;
+            let mut buffers = [0; 2];
+            gl::GenVertexArrays(1, &mut array);
+            gl::GenBuffers(2, buffers.as_mut_ptr());
+            let [verts, block] = buffers;
+            gl::BindVertexArray(array);
+            gl::BindBuffer(gl::ARRAY_BUFFER, verts);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                std::mem::size_of_val(&TRI_VERTS) as GLsizeiptr,
+                TRI_VERTS.as_ptr() as *const c_void,
+                gl::STATIC_DRAW,
+            );
+            gl::EnableVertexAttribArray(pos_handle);
+            gl::VertexAttribPointer(pos_handle, 2, gl::FLOAT, 0, 0, null());
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+            let dims =
+                gl::GetUniformLocation(program, CString::new("Dimensions").unwrap().as_ptr());
+            let block_handle =
+                gl::GetUniformBlockIndex(program, CString::new("bitstring").unwrap().as_ptr());
+            Application {
+                program,
+                array,
+                block,
+                dims,
+                block_handle,
+            }
+        }
+    }
 
-        println!("handle: {}", pos_handle);
+    fn render(&self, x: i32, y: i32) {
+        unsafe {
+            gl::ClearColor(0.2, 0.3, 0.3, 1.0);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
 
-        let dims = gl::GetUniformLocation(program, CString::new("Dimensions").unwrap().as_ptr());
-        println!("uniform: {}", dims);
-        gl::Uniform2f(dims, x as f32, y as f32);
+            gl::UseProgram(self.program);
 
-        gl::VertexAttribPointer(
-            pos_handle,
-            2,
-            gl::FLOAT,
-            gl::FALSE as u8,
-            0,
-            TRI_VERTS.as_ptr() as *const c_void,
-        );
+            gl::Uniform2f(self.dims, x as f32, y as f32);
 
-        gl::EnableVertexAttribArray(pos_handle);
+            gl::BindBuffer(gl::UNIFORM_BUFFER, self.block);
+            gl::BufferData(
+                gl::UNIFORM_BUFFER,
+                16 * 4,
+                BITSTRING.as_ptr() as *const c_void,
+                gl::DYNAMIC_DRAW,
+            );
+            gl::UniformBlockBinding(self.program, self.block_handle, 2);
+            gl::BindBufferBase(gl::UNIFORM_BUFFER, 2, self.block);
 
-        let mut block = 0;
-        gl::GenBuffers(1, &mut block);
-        gl::BindBuffer(gl::UNIFORM_BUFFER, block);
-        gl::BufferData(
-            gl::UNIFORM_BUFFER,
-            16 * 4,
-            BITSTRING.as_ptr() as *const c_void,
-            gl::STATIC_DRAW,
-        );
-        println!("buffer object: {}", block);
+            gl::BindVertexArray(self.array);
 
-        let block_handle =
-            gl::GetUniformBlockIndex(program, CString::new("bitstring").unwrap().as_ptr());
-        println!("uniform buffer: {}", block_handle);
-        gl::UniformBlockBinding(program, block_handle, 2);
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 2, block);
-
-        gl::DrawArraysInstanced(gl::TRIANGLES, 0, 3, 4 * 32);
+            gl::DrawArraysInstanced(gl::TRIANGLES, 0, 3, 4 * 32);
+        }
     }
 }
