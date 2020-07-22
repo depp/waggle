@@ -4,6 +4,7 @@ use glutin::event_loop::{ControlFlow, EventLoop};
 use glutin::window::WindowBuilder;
 use glutin::ContextBuilder;
 use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
 use takeable_option::Takeable;
 
 use gl;
@@ -31,6 +32,12 @@ pub fn main() {
     gl::load_with(|name| raw_context.get_proc_address(name));
     assert!(gl::ClearColor::is_loaded());
     assert!(gl::Clear::is_loaded());
+    eprintln!(
+        "OpenGL Version: {}",
+        unsafe { CStr::from_ptr(gl::GetString(gl::VERSION) as *const c_char) }
+            .to_str()
+            .unwrap()
+    );
 
     let program = init_shaders();
     println!("program: {}", program);
