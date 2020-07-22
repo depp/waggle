@@ -2,7 +2,7 @@ use glutin::dpi::PhysicalSize;
 use glutin::event::{Event, WindowEvent};
 use glutin::event_loop::{ControlFlow, EventLoop};
 use glutin::window::WindowBuilder;
-use glutin::ContextBuilder;
+use glutin::{ContextBuilder, GlProfile};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 use std::ptr::null;
@@ -21,6 +21,7 @@ pub fn main() {
             .with_inner_size(PhysicalSize::new(2200, 512));
 
         let raw_context = ContextBuilder::new()
+            .with_gl_profile(GlProfile::Core)
             .with_gl_debug_flag(true)
             .build_windowed(wb, &el)
             .unwrap();
