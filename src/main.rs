@@ -5,6 +5,9 @@ use glutin::window::WindowBuilder;
 use glutin::ContextBuilder;
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
+use std::ptr::null;
+use std::slice;
+use std::str;
 use takeable_option::Takeable;
 
 use gl;
@@ -17,11 +20,13 @@ pub fn main() {
             .with_title("A fantastic window!")
             .with_inner_size(PhysicalSize::new(2200, 512));
 
-        let raw_context = ContextBuilder::new().build_windowed(wb, &el).unwrap();
+        let raw_context = ContextBuilder::new()
+            .with_gl_debug_flag(true)
+            .build_windowed(wb, &el)
+            .unwrap();
 
         (raw_context, el)
     };
-
     let raw_context = unsafe { raw_context.make_current().unwrap() };
 
     println!(
@@ -38,6 +43,18 @@ pub fn main() {
             .to_str()
             .unwrap()
     );
+    let mut has_khr_debug = false;
+    for ext in extensions() {
+        match ext {
+            "GL_KHR_debug" => has_khr_debug = true,
+            _ => (),
+        }
+    }
+    let mut flags = 0;
+    unsafe { gl::GetIntegerv(gl::CONTEXT_FLAGS, &mut flags) };
+    if has_khr_debug && (flags as u32) & gl::CONTEXT_FLAG_DEBUG_BIT != 0 {
+        unsafe { gl::DebugMessageCallbackKHR(Some(debug_callback), null()) };
+    }
 
     let program = init_shaders();
     println!("program: {}", program);
@@ -84,6 +101,78 @@ pub fn main() {
             _ => (),
         }
     });
+}
+
+struct Extensions(GLint, GLint);
+
+fn extensions() -> Extensions {
+    let mut count = 0;
+    unsafe { gl::GetIntegerv(gl::NUM_EXTENSIONS, &mut count) };
+    Extensions(0, count)
+}
+
+impl Iterator for Extensions {
+    type Item = &'static str;
+    fn next(&mut self) -> Option<Self::Item> {
+        let &mut Extensions(ref mut index, count) = self;
+        if *index < count {
+            let name = unsafe {
+                CStr::from_ptr(gl::GetStringi(gl::EXTENSIONS, *index as GLuint) as *const c_char)
+            }
+            .to_str()
+            .unwrap();
+            *index += 1;
+            Some(name)
+        } else {
+            None
+        }
+    }
+}
+
+extern "system" fn debug_callback(
+    source: GLenum,
+    gltype: GLenum,
+    id: GLuint,
+    severity: GLenum,
+    length: GLsizei,
+    message: *const GLchar,
+    _user_param: *mut c_void,
+) {
+    let source = match source {
+        gl::DEBUG_SOURCE_API => "api",
+        gl::DEBUG_SOURCE_SHADER_COMPILER => "shader_compiler",
+        gl::DEBUG_SOURCE_WINDOW_SYSTEM => "window_system",
+        gl::DEBUG_SOURCE_THIRD_PARTY => "third_party",
+        gl::DEBUG_SOURCE_APPLICATION => "application",
+        gl::DEBUG_SOURCE_OTHER => "other",
+        _ => "unknown",
+    };
+    let gltype = match gltype {
+        gl::DEBUG_TYPE_ERROR => "error",
+        gl::DEBUG_TYPE_DEPRECATED_BEHAVIOR => "deprecated_behavior",
+        gl::DEBUG_TYPE_UNDEFINED_BEHAVIOR => "undefined_behavior",
+        gl::DEBUG_TYPE_PERFORMANCE => "performance",
+        gl::DEBUG_TYPE_PORTABILITY => "portability",
+        gl::DEBUG_TYPE_OTHER => "other",
+        gl::DEBUG_TYPE_MARKER => "marker",
+        gl::DEBUG_TYPE_PUSH_GROUP => "push_group",
+        gl::DEBUG_TYPE_POP_GROUP => "pop_group",
+        _ => "unknown",
+    };
+    let severity = match severity {
+        gl::DEBUG_SEVERITY_HIGH => "high",
+        gl::DEBUG_SEVERITY_MEDIUM => "medium",
+        gl::DEBUG_SEVERITY_LOW => "low",
+        gl::DEBUG_SEVERITY_NOTIFICATION => "notification",
+        _ => "unknown",
+    };
+    let message =
+        str::from_utf8(unsafe { slice::from_raw_parts(message as *const u8, length as usize) })
+            .unwrap();
+    eprintln!(
+        "OpenGL: src={}, type={}, id={}, sev={}: {}",
+        source, gltype, id, severity, message
+    );
 }
 
 const VERTEX_SRC: &str = include_str!("vertex_shader.glsl");
